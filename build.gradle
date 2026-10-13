@@ -1,0 +1,53 @@
+// Offline build: all libraries are bundled in libs/ (Montoya API compiled from the official source,
+// sqlite-jdbc built from xerial's tag 3.53.4.0). No repositories needed.
+plugins {
+    id 'java'
+}
+
+group = 'vn.vsec'
+version = '1.0.0'
+
+def montoya = files('libs/montoya-api-2026.7.jar')
+def sqlite = files('libs/sqlite-jdbc-3.53.4.0.jar')
+
+dependencies {
+    compileOnly montoya              // provided by Burp at runtime
+    implementation sqlite            // bundled into the jar
+    testImplementation montoya
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-Xlint:all,-serial,-processing']
+}
+
+// No JUnit: the self-test runs via main() so the build works fully offline.
+tasks.named('test') { enabled = false }
+
+def testTask = { String name, String mainClassName, String desc ->
+    tasks.register(name, JavaExec) {
+        group = 'verification'
+        description = desc
+        classpath = sourceSets.test.runtimeClasspath
+        mainClass = mainClassName
+        jvmArgs '-Dstdout.encoding=UTF-8', '-Dfile.encoding=UTF-8'
+    }
+}
+testTask('selfTest', 'apitracker.SelfTest', 'Core unit tests + benchmark (no Burp needed)')
+testTask('integrationTest', 'apitracker.BurpIntegrationTest', 'Run the extension on a fake Burp (needs a display)')
+testTask('bench', 'apitracker.HotPathBench', 'Measure handler cost on Burp threads')
+testTask('screenshots', 'apitracker.Screenshots', 'Regenerate the README screenshots and sample AI export (needs a display)')
+tasks.named('screenshots') { args 'docs/images' }
+tasks.named('check') { dependsOn 'selfTest' }
+
+jar {
+    archiveFileName = 'api-tracker.jar'
+    destinationDirectory = file('dist')
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    } {
+        exclude 'META-INF/MANIFEST.MF'
+    }
+}
